@@ -1,5 +1,6 @@
 import ReadInput.getInitialField
 import java.io.File
+import kotlin.math.abs
 import kotlin.random.Random
 import kotlin.random.nextInt
 
@@ -61,7 +62,7 @@ data class GameField(
                 seenCount[digit] = seenCount[digit]!! + 1
             }
             seenCount.values.forEach {
-                columnFitness -= (if (it == 0) 0 else (it - 1))
+                columnFitness += (if (it == 0) 0 else (it - 1))
             }
         }
         return columnFitness
@@ -80,7 +81,7 @@ data class GameField(
                     }
                 }
                 seenCount.values.forEach {
-                    blockFitness -= (if (it == 0) 0 else (it - 1))
+                    blockFitness += (if (it == 0) 0 else (it - 1))
                 }
             }
         }
@@ -124,6 +125,38 @@ data class Population(
 
     private fun generatePopulation(): List<GameField> {
         return (1..Constants.POPULATION_SIZE).map { GameField(initialField) }
+    }
+
+    fun getWeightedPool(): List<GameField> {
+        val sortedPopulation = _population.sortedByDescending { it.fitness }
+        val weights = (1.._population.size).toList()
+        val randomPool = mutableListOf<GameField>()
+        repeat(Constants.POPULATION_SIZE) {
+            randomPool.add(weightedRandomChoice(sortedPopulation, weights))
+        }
+        return randomPool
+    }
+
+    fun getRandomPool(): List<GameField> {
+        val weights = _population.map { abs(it.fitness - _population[0].fitness) }
+        val randomPool = mutableListOf<GameField>()
+        repeat(Constants.POPULATION_SIZE) {
+            randomPool.add(weightedRandomChoice(_population, weights))
+        }
+        return randomPool
+    }
+
+    private fun <T> weightedRandomChoice(items: List<T>, weights: List<Int>): T {
+        val totalWeight = weights.sum()
+        val randomVariable = Random.nextInt(0, totalWeight)
+        var cumulativeWeight = 0
+        for (i in items.indices) {
+            cumulativeWeight += weights[i]
+            if (randomVariable < cumulativeWeight) {
+                return items[i]
+            }
+        }
+        return items.last()
     }
 }
 
@@ -169,9 +202,16 @@ fun mutation(initialField: List<List<Int>>, parent: GameField): GameField {
 fun main() {
     val initialField = getInitialField()
     val population = Population(initialField)
-    population.population.forEach {
-        it.printField()
-        println(it.fitness)
-        println()
-    }
+    val randomPopulation = population.getRandomPool()
+    val weightedPopulation = population.getWeightedPool()
+
+    print("population: ")
+    population.population.forEach { print(" " + it.fitness) }
+    println('\n')
+    print("random: ")
+    randomPopulation.forEach { print(" " + it.fitness) }
+    println('\n')
+    println()
+    print("weighted: ")
+    weightedPopulation.forEach { print(" " + it.fitness) }
 }
