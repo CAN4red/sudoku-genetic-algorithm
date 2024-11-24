@@ -1,9 +1,12 @@
 import ReadInput.getInitialField
 import java.io.File
+import kotlin.random.Random
+import kotlin.random.nextInt
 
 data object Constants {
     const val POPULATION_SIZE = 100
     const val FIELD_SIZE = 9
+    const val MUTATION_CHANCE = 0.1
 }
 
 object ReadInput {
@@ -35,8 +38,10 @@ object ReadInput {
 
 data class GameField(
     private val initialField: List<List<Int>>,
+    private val fieldCopy: List<List<Int>>? = null,
 ) {
-    private val _field = generateField()
+    // performs deep copy if fieldCopy isn't null
+    private val _field: List<List<Int>> = fieldCopy?.map { it.toList() } ?: generateField()
     val field get() = _field
     val fitness = calculateFitness()
 
@@ -82,30 +87,31 @@ data class GameField(
         return blockFitness
     }
 
-
-    private fun generateRow(initialRow: List<Int>): List<Int> {
-        val newRow = (1..9).toList().shuffled().toMutableList()
-        for (i in newRow.indices) {
-            if (newRow[i] != initialRow[i] && initialRow[i] != 0) {
-                val swapIndex = newRow.indexOf(initialRow[i])
-                newRow.swap(i, swapIndex)
-            }
-        }
-        return newRow
-    }
-
-    private fun <T> MutableList<T>.swap(index1: Int, index2: Int) {
-        val temp = this[index1]
-        this[index1] = this[index2]
-        this[index2] = temp
-    }
-
     private fun generateField(): List<List<Int>> {
         return initialField.map { row -> generateRow(row) }
     }
 
     fun printField() {
         field.forEach { row -> println(row) }
+    }
+
+    companion object {
+        fun generateRow(initialRow: List<Int>): List<Int> {
+            val newRow = (1..9).toList().shuffled().toMutableList()
+            for (i in newRow.indices) {
+                if (newRow[i] != initialRow[i] && initialRow[i] != 0) {
+                    val swapIndex = newRow.indexOf(initialRow[i])
+                    newRow.swap(i, swapIndex)
+                }
+            }
+            return newRow
+        }
+
+        private fun <T> MutableList<T>.swap(index1: Int, index2: Int) {
+            val temp = this[index1]
+            this[index1] = this[index2]
+            this[index2] = temp
+        }
     }
 }
 
@@ -119,6 +125,44 @@ data class Population(
     private fun generatePopulation(): List<GameField> {
         return (1..Constants.POPULATION_SIZE).map { GameField(initialField) }
     }
+}
+
+
+fun crossover(
+    initialField: List<List<Int>>,
+    parent1: GameField,
+    parent2: GameField
+): Pair<GameField, GameField> {
+    val fieldChild1 = mutableListOf<List<Int>>()
+    val fieldChild2 = mutableListOf<List<Int>>()
+    for (i in 0..<(Constants.FIELD_SIZE)) {
+        val crossoverVariant = Random.nextInt(0..1)
+        if (crossoverVariant == 1) {
+            fieldChild1.add(parent1.field[i])
+            fieldChild2.add(parent2.field[i])
+        } else {
+            fieldChild1.add(parent2.field[i])
+            fieldChild2.add(parent1.field[i])
+        }
+    }
+    return Pair(
+        first = GameField(initialField, fieldChild1),
+        second = GameField(initialField, fieldChild2)
+    )
+}
+
+
+fun mutation(initialField: List<List<Int>>, parent: GameField): GameField {
+    val fieldChild = mutableListOf<List<Int>>()
+    for (i in 0..<(Constants.FIELD_SIZE)) {
+        val mutationEvent = Random.nextInt(0..100)
+        if (mutationEvent < Constants.MUTATION_CHANCE * 100) {
+            fieldChild.add(GameField.generateRow(initialField[i]))
+        } else {
+            fieldChild.add(parent.field[i])
+        }
+    }
+    return GameField(initialField, fieldChild)
 }
 
 
