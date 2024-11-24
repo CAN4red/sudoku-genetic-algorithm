@@ -1,9 +1,11 @@
+import ReadInput.getInitialField
 import java.io.File
 
 object ReadInput {
-    private const val FILE_PATH = "C:\\Users\\Alexa\\IdeaProjectsKotlin\\sudoku-genetic-algorithm\\src\\input.txt"
+    private const val FILE_PATH =
+        "C:\\Users\\Alexa\\IdeaProjectsKotlin\\sudoku-genetic-algorithm\\src\\input.txt"
 
-    fun getInitialPuzzle(): List<List<Int>> {
+    fun getInitialField(): List<List<Int>> {
         val input = readInput(FILE_PATH)
         return processInput(input)
     }
@@ -26,7 +28,33 @@ object ReadInput {
     }
 }
 
+fun generateRow(initialRow: List<Int>): List<Int> {
+    val newRow = (1..9).toList().shuffled().toMutableList()
+    for (i in newRow.indices) {
+        if (newRow[i] != initialRow[i] && initialRow[i] != 0) {
+            val swapIndex = newRow.indexOf(initialRow[i])
+            newRow.swap(i, swapIndex)
+        }
+    }
+    return newRow
+}
+
+fun <T> MutableList<T>.swap(index1: Int, index2: Int) {
+    val temp = this[index1]
+    this[index1] = this[index2]
+    this[index2] = temp
+}
+
+fun generateField(initialField: List<List<Int>>): List<List<Int>> {
+    return initialField.map { row -> generateRow(row) }
+}
+
 
 fun main() {
-    println(ReadInput.getInitialPuzzle())
+    val initialField = getInitialField()
+    val generatedField = generateField(initialField)
+
+    println(initialField)
+    println()
+    println(generatedField)
 }
