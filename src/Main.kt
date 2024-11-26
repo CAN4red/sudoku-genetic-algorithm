@@ -1,12 +1,14 @@
 import ReadInput.getInitialField
 import java.io.File
 import kotlin.math.abs
+import kotlin.math.pow
 import kotlin.random.Random
 import kotlin.random.nextInt
 
 data object Constants {
     const val FIELD_SIZE = 9
-    const val POPULATION_SIZE = 1000
+    const val POPULATION_SIZE = 300
+    const val POPULATION_COUNT = 1000
     const val MUTATION_PROBABILITY = 0.1
     const val CROSSOVER_PROBABILITY = 0.95
 }
@@ -54,7 +56,6 @@ private fun <T> MutableList<T>.swapWithCopy(index1: Int, index2: Int): MutableLi
 }
 
 
-
 data class GameField(
     private val initialField: List<List<Int>>,
     private val fieldCopy: List<List<Int>>? = null,
@@ -66,8 +67,8 @@ data class GameField(
 
     private fun calculateFitness(): Int {
         var fitness = 0
-        fitness += calculateColumnFitness()
-        fitness += calculateBlockFitness()
+        fitness += calculateColumnFitness().toDouble().pow(2.0).toInt()
+        fitness += calculateBlockFitness().toDouble().pow(2.0).toInt()
         return fitness
     }
 
@@ -141,35 +142,38 @@ data class Population(
     }
 
     fun getWeightedPool(): List<GameField> {
-        val sortedPopulation = _population.sortedByDescending { it.fitness }
-        val weights = (1.._population.size).toList()
+        val sortedPopulation = _population.sortedByDescending { it.fitness }.toMutableList()
+        val weights = (1.._population.size).toMutableList()
         val randomPool = mutableListOf<GameField>()
         repeat(Constants.POPULATION_SIZE) {
-            randomPool.add(weightedRandomChoice(sortedPopulation, weights))
+            val currentChoiceId = weightedRandomChoice(sortedPopulation, weights)
+            val currentChoice = sortedPopulation.removeAt(currentChoiceId)
+            weights.removeAt(currentChoiceId)
+            randomPool.add(currentChoice)
         }
         return randomPool
     }
 
-    fun getRandomPool(): List<GameField> {
-        val weights = _population.map { abs(it.fitness - _population[0].fitness) }
-        val randomPool = mutableListOf<GameField>()
-        repeat(Constants.POPULATION_SIZE) {
-            randomPool.add(weightedRandomChoice(_population, weights))
-        }
-        return randomPool
-    }
+//    fun getRandomPool(): List<GameField> {
+//        val weights = _population.map { abs(it.fitness - _population[0].fitness) }
+//        val randomPool = mutableListOf<GameField>()
+//        repeat(Constants.POPULATION_SIZE) {
+//            randomPool.add(weightedRandomChoice(_population, weights))
+//        }
+//        return randomPool
+//    }
 
-    private fun <T> weightedRandomChoice(items: List<T>, weights: List<Int>): T {
+    private fun <T> weightedRandomChoice(items: List<T>, weights: List<Int>): Int {
         val totalWeight = weights.sum()
         val randomVariable = Random.nextInt(0, totalWeight)
         var cumulativeWeight = 0
         for (i in items.indices) {
             cumulativeWeight += weights[i]
             if (randomVariable < cumulativeWeight) {
-                return items[i]
+                return i
             }
         }
-        return items.last()
+        return weights.last() - 1
     }
 
     fun getChildren(): List<GameField> {
@@ -183,8 +187,16 @@ data class Population(
                 gameField1 = childrenPair.first
                 gameField2 = childrenPair.second
             }
-            childrenPool.add(rearrangementMutation(initialField, gameField1))
-            childrenPool.add(rearrangementMutation(initialField, gameField2))
+            gameField1 = rearrangementMutation(initialField, gameField1)
+            gameField2 = rearrangementMutation(initialField, gameField2)
+            if (gameField1.fitness <= 16) {
+                gameField1 = localSearchMutation(initialField, gameField1)
+            }
+            if (gameField2.fitness <= 16) {
+                gameField2 = localSearchMutation(initialField, gameField2)
+            }
+            childrenPool.add(gameField1)
+            childrenPool.add(gameField2)
         }
         return childrenPool
     }
@@ -257,25 +269,91 @@ fun rearrangementMutation(initialField: List<List<Int>>, parent: GameField): Gam
 }
 
 
+fun localSearchMutation(initialField: List<List<Int>>, parent: GameField): GameField {
+    var colRepetitionMatrix = getColRepetitionMatrix(initialField, parent.field)
+    val fieldChild = parent.field.map { it.toMutableList() }.toMutableList()
+    for (i in 0..<(Constants.FIELD_SIZE)) {
+        val freeIndices = (0..<(Constants.FIELD_SIZE)).filter { it != i }
+        for (freeId in freeIndices) {
+            val conjunction = colRepetitionMatrix[i]
+                .zip(colRepetitionMatrix[freeId]) { a, b -> a && b }
+            val samePosRepetition = conjunction.indexOf(true)
+            if (samePosRepetition != -1) {
+                val temp = fieldChild[i][samePosRepetition]
+                fieldChild[i][samePosRepetition] = fieldChild[freeId][samePosRepetition]
+                fieldChild[freeId][samePosRepetition] = temp
+                colRepetitionMatrix = getColRepetitionMatrix(initialField, fieldChild)
+            }
+        }
+    }
+    return GameField(initialField, fieldChild)
+}
+
+private fun getColRepetitionMatrix(initialField: List<List<Int>>, field: List<List<Int>>): List<List<Boolean>> {
+    val colRepetitionMatrix = (1..(Constants.FIELD_SIZE))
+        .map { MutableList(Constants.FIELD_SIZE) { false } }
+        .toMutableList()
+    for (j in 0..<(Constants.FIELD_SIZE)) {
+        val repetitions = IntArray(Constants.FIELD_SIZE)
+        for (i in 0..<(Constants.FIELD_SIZE)) {
+            val digit = field[i][j]
+            repetitions[digit - 1]++
+        }
+        for (i in 0..<(Constants.FIELD_SIZE)) {
+            if (initialField[i][j] == 0) {
+                colRepetitionMatrix[j][i] = repetitions[i] > 1
+            }
+        }
+    }
+    return colRepetitionMatrix
+}
+
+
 fun geneticAlgorithm() {
     val initialField = getInitialField()
-    var population = Population(initialField)
+    var populationState = Population(initialField)
+    var generationNumber = 0
     while (true) {
-        val matingPool = population.getWeightedPool()
+        if (generationNumber++ >= Constants.POPULATION_COUNT) {
+            populationState = Population(initialField)
+            generationNumber = 0
+        }
+        val matingPool = populationState.getWeightedPool()
         matingPool.shuffled()
         val matingPopulation = Population(initialField, matingPool)
         val childrenPool = matingPopulation.getChildren()
         val bestGameField = childrenPool.minByOrNull { it.fitness }
-        println("Best fitness: ${bestGameField?.fitness}")
+        println("$generationNumber Best fitness: ${bestGameField?.fitness}")
+//        if (bestGameField?.fitness == 4) {
+//            bestGameField.printField()
+//        }
         if (bestGameField?.fitness == 0) {
             bestGameField.printField()
             break
         }
-        population = Population(initialField, childrenPool)
+        populationState = Population(initialField, childrenPool)
     }
 }
 
 
 fun main() {
     geneticAlgorithm()
+//    val initialField = getInitialField()
+//    val field = listOf(
+//        listOf(8, 3, 6, 5, 1, 2, 9, 4, 7),
+//        listOf(1, 7, 5, 6, 2, 8, 4, 9, 3),
+//        listOf(6, 2, 4, 8, 3, 7, 1, 9, 5),
+//        listOf(3, 7, 9, 4, 8, 6, 2, 5, 1),
+//        listOf(2, 6, 3, 7, 5, 1, 8, 4, 8),
+//        listOf(9, 5, 8, 2, 4, 9, 7, 3, 2),
+//        listOf(8, 1, 7, 1, 6, 4, 3, 5, 9),
+//        listOf(4, 8, 1, 9, 7, 3, 6, 8, 6),
+//        listOf(5, 4, 2, 3, 9, 5, 1, 2, 8)
+//    )
+//    val sudokuField = GameField(initialField, field)
+//    println(sudokuField.fitness)
+//    val newField = localSearchMutation(initialField, sudokuField)
+//    newField.printField()
+//    println(newField.fitness)
 }
+
