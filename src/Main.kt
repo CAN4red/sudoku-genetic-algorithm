@@ -5,9 +5,10 @@ import kotlin.random.Random
 import kotlin.random.nextInt
 
 data object Constants {
-    const val POPULATION_SIZE = 100
     const val FIELD_SIZE = 9
-    const val MUTATION_CHANCE = 0.1
+    const val POPULATION_SIZE = 1000
+    const val MUTATION_PROBABILITY = 0.1
+    const val CROSSOVER_PROBABILITY = 0.95
 }
 
 object ReadInput {
@@ -16,10 +17,11 @@ object ReadInput {
 
     fun getInitialField(): List<List<Int>> {
         val input = readInput(FILE_PATH)
+//        val input = readInput()
         return processInput(input)
     }
 
-    private fun readInput(filePath: String?): List<String> {
+    private fun readInput(filePath: String? = null): List<String> {
         return filePath?.let { path ->
             File(path).readLines()
         }
@@ -36,6 +38,22 @@ object ReadInput {
         return this.toIntOrNull() ?: 0
     }
 }
+
+private fun <T> MutableList<T>.swapInPlace(index1: Int, index2: Int) {
+    val temp = this[index1]
+    this[index1] = this[index2]
+    this[index2] = temp
+}
+
+private fun <T> MutableList<T>.swapWithCopy(index1: Int, index2: Int): MutableList<T> {
+    val newList = this.toMutableList()
+    val temp = newList[index1]
+    newList[index1] = newList[index2]
+    newList[index2] = temp
+    return newList
+}
+
+
 
 data class GameField(
     private val initialField: List<List<Int>>,
@@ -93,7 +111,7 @@ data class GameField(
     }
 
     fun printField() {
-        field.forEach { row -> println(row) }
+        field.forEach { row -> println(row.joinToString(" ")) }
     }
 
     companion object {
@@ -102,16 +120,10 @@ data class GameField(
             for (i in newRow.indices) {
                 if (newRow[i] != initialRow[i] && initialRow[i] != 0) {
                     val swapIndex = newRow.indexOf(initialRow[i])
-                    newRow.swap(i, swapIndex)
+                    newRow.swapInPlace(i, swapIndex)
                 }
             }
             return newRow
-        }
-
-        private fun <T> MutableList<T>.swap(index1: Int, index2: Int) {
-            val temp = this[index1]
-            this[index1] = this[index2]
-            this[index2] = temp
         }
     }
 }
@@ -119,8 +131,9 @@ data class GameField(
 
 data class Population(
     private val initialField: List<List<Int>>,
+    private val populationCopy: List<GameField>? = null,
 ) {
-    private val _population = generatePopulation()
+    private val _population = populationCopy ?: generatePopulation()
     val population get() = _population
 
     private fun generatePopulation(): List<GameField> {
@@ -158,6 +171,23 @@ data class Population(
         }
         return items.last()
     }
+
+    fun getChildren(): List<GameField> {
+        val childrenPool = mutableListOf<GameField>()
+        for (i in 0..<(Constants.POPULATION_SIZE / 2)) {
+            var gameField1 = _population[i]
+            var gameField2 = _population[(i + 1) % _population.size]
+            val crossoverChance = Random.nextInt(0..100)
+            if (crossoverChance < Constants.CROSSOVER_PROBABILITY * 100) {
+                val childrenPair = crossover(initialField, gameField1, gameField2)
+                gameField1 = childrenPair.first
+                gameField2 = childrenPair.second
+            }
+            childrenPool.add(rearrangementMutation(initialField, gameField1))
+            childrenPool.add(rearrangementMutation(initialField, gameField2))
+        }
+        return childrenPool
+    }
 }
 
 
@@ -185,11 +215,11 @@ fun crossover(
 }
 
 
-fun mutation(initialField: List<List<Int>>, parent: GameField): GameField {
+fun refillingMutation(initialField: List<List<Int>>, parent: GameField): GameField {
     val fieldChild = mutableListOf<List<Int>>()
     for (i in 0..<(Constants.FIELD_SIZE)) {
         val mutationEvent = Random.nextInt(0..100)
-        if (mutationEvent < Constants.MUTATION_CHANCE * 100) {
+        if (mutationEvent < Constants.MUTATION_PROBABILITY * 100) {
             fieldChild.add(GameField.generateRow(initialField[i]))
         } else {
             fieldChild.add(parent.field[i])
@@ -199,19 +229,53 @@ fun mutation(initialField: List<List<Int>>, parent: GameField): GameField {
 }
 
 
-fun main() {
-    val initialField = getInitialField()
-    val population = Population(initialField)
-    val randomPopulation = population.getRandomPool()
-    val weightedPopulation = population.getWeightedPool()
+fun rearrangementMutation(initialField: List<List<Int>>, parent: GameField): GameField {
+    val fieldChild = mutableListOf<List<Int>>()
+    for (i in 0..<(Constants.FIELD_SIZE)) {
+        val mutationEvent = Random.nextInt(0..100)
+        if (mutationEvent < Constants.MUTATION_PROBABILITY * 100) {
+            val freeIndices = initialField[i]
+                .mapIndexedNotNull { index, value -> if (value == 0) index else null }
+                .toMutableList()
+            val freeIndex1: Int = try {
+                freeIndices.random()
+            } catch (e: NoSuchElementException) {
+                0
+            }
+            freeIndices.remove(freeIndex1)
+            val freeIndex2 = try {
+                freeIndices.random()
+            } catch (e: NoSuchElementException) {
+                freeIndex1
+            }
+            fieldChild.add(parent.field[i].toMutableList().swapWithCopy(freeIndex1, freeIndex2))
+        } else {
+            fieldChild.add(parent.field[i])
+        }
+    }
+    return GameField(initialField, fieldChild)
+}
 
-    print("population: ")
-    population.population.forEach { print(" " + it.fitness) }
-    println('\n')
-    print("random: ")
-    randomPopulation.forEach { print(" " + it.fitness) }
-    println('\n')
-    println()
-    print("weighted: ")
-    weightedPopulation.forEach { print(" " + it.fitness) }
+
+fun geneticAlgorithm() {
+    val initialField = getInitialField()
+    var population = Population(initialField)
+    while (true) {
+        val matingPool = population.getWeightedPool()
+        matingPool.shuffled()
+        val matingPopulation = Population(initialField, matingPool)
+        val childrenPool = matingPopulation.getChildren()
+        val bestGameField = childrenPool.minByOrNull { it.fitness }
+        println("Best fitness: ${bestGameField?.fitness}")
+        if (bestGameField?.fitness == 0) {
+            bestGameField.printField()
+            break
+        }
+        population = Population(initialField, childrenPool)
+    }
+}
+
+
+fun main() {
+    geneticAlgorithm()
 }
