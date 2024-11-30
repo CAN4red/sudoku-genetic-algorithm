@@ -13,9 +13,12 @@ data object Config {
 
     const val MUTATION_PROBABILITY = 0.1
 
-    const val DEBUG_MODE = true
+    const val DEBUG_MODE = false
 }
 
+/**
+ * All the possible ranges for each block.
+ */
 data object BlockRanges {
     val ranges = listOf(
         Pair((0..2), (0..2)),
@@ -57,9 +60,7 @@ object Input {
      * @return A Sudoku field represented by strings read from the input.
      */
     private fun readInput(filePath: String? = null): List<String> {
-        return filePath?.let { path ->
-            File(path).readLines()
-        }
+        return filePath?.let { path -> File(path).readLines() }
             ?: (1..9).map { readlnOrNull() ?: "" }
     }
 
@@ -77,6 +78,7 @@ object Input {
 
     /**
      * Converts a string to an integer.
+     *
      * @return An integer, or 0 if the conversion fails.
      */
     private fun String.toDigit(): Int {
@@ -171,8 +173,8 @@ class SudokuField(
 
     /**
      * Calculates the fitness of the Sudoku field.
+     * The fitness is calculated based on the number of duplicate values in columns and rows.
      *
-     * The fitness is calculated based on the number of duplicate values in columns and blocks.
      * @return An integer representing the fitness value.
      */
     private fun calculateFitness(): Int {
@@ -293,7 +295,7 @@ class Population {
 }
 
 /**
- * Executes the genetic algorithm to solve the Sudoku puzzle.
+ * Executes the genetic algorithm to solve the Sudoku.
  */
 fun geneticAlgorithm() {
     var population = Population()
@@ -342,4 +344,3 @@ fun main() {
     geneticAlgorithm()
     println((System.currentTimeMillis() - startingTime) / 1000.0)
 }
-// attempt 1
