@@ -1,28 +1,61 @@
-import ReadInput.getInitialField
 import java.io.File
-import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.pow
 import kotlin.random.Random
 import kotlin.random.nextInt
 
-data object Constants {
-    const val FIELD_SIZE = 9
-    const val POPULATION_SIZE = 300
-    const val POPULATION_COUNT = 1000
+/**
+ * Configuration parameters for the algorithm.
+ */
+data object Config {
+    const val POPULATION_SIZE = 200
+    const val POPULATION_STAGNATION_DURATION = 90
+
     const val MUTATION_PROBABILITY = 0.1
-    const val CROSSOVER_PROBABILITY = 0.95
+
+    const val DEBUG_MODE = true
 }
 
-object ReadInput {
+data object BlockRanges {
+    val ranges = listOf(
+        Pair((0..2), (0..2)),
+        Pair((0..2), (3..5)),
+        Pair((0..2), (6..8)),
+        Pair((3..5), (0..2)),
+        Pair((3..5), (3..5)),
+        Pair((3..5), (6..8)),
+        Pair((6..8), (0..2)),
+        Pair((6..8), (3..5)),
+        Pair((6..8), (6..8)),
+    )
+}
+
+/**
+ * Object for reading the initial Sudoku field from a file or user input depending on Config parameters.
+ */
+object Input {
     private const val FILE_PATH =
         "C:\\Users\\Alexa\\IdeaProjectsKotlin\\sudoku-genetic-algorithm\\src\\input.txt"
 
-    fun getInitialField(): List<List<Int>> {
-        val input = readInput(FILE_PATH)
-//        val input = readInput()
+    /** The initial Sudoku field. */
+    val initialField = readInitialField()
+
+    /**
+     * Reads the initial Sudoku field.
+     *
+     * @return A Sudoku field represented by integers representing the initial field.
+     */
+    private fun readInitialField(): List<List<Int>> {
+        val input = if (Config.DEBUG_MODE) readInput(FILE_PATH) else readInput()
         return processInput(input)
     }
 
+    /**
+     * Reads input data from a file or standard input.
+     *
+     * @param filePath The path to the file (if null, standard input is used).
+     * @return A Sudoku field represented by strings read from the input.
+     */
     private fun readInput(filePath: String? = null): List<String> {
         return filePath?.let { path ->
             File(path).readLines()
@@ -30,48 +63,128 @@ object ReadInput {
             ?: (1..9).map { readlnOrNull() ?: "" }
     }
 
+    /**
+     * Processes the input data and converts it into a list of lists of integers.
+     *
+     * @param input A list of strings representing the Sudoku field.
+     * @return A Sudoku field represented by integers.
+     */
     private fun processInput(input: List<String>): List<List<Int>> {
         return input.map { line ->
             line.split(" ").map { it.toDigit() }
         }
     }
 
+    /**
+     * Converts a string to an integer.
+     * @return An integer, or 0 if the conversion fails.
+     */
     private fun String.toDigit(): Int {
         return this.toIntOrNull() ?: 0
     }
 }
 
-private fun <T> MutableList<T>.swapInPlace(index1: Int, index2: Int) {
-    val temp = this[index1]
-    this[index1] = this[index2]
-    this[index2] = temp
-}
-
-private fun <T> MutableList<T>.swapWithCopy(index1: Int, index2: Int): MutableList<T> {
-    val newList = this.toMutableList()
-    val temp = newList[index1]
-    newList[index1] = newList[index2]
-    newList[index2] = temp
-    return newList
-}
-
-
-data class GameField(
-    private val initialField: List<List<Int>>,
-    private val fieldCopy: List<List<Int>>? = null,
+/**
+ * Class representing a Sudoku field.
+ *
+ * @param copyingField The field to copy from (if null, a new field is generated).
+ */
+class SudokuField(
+    copyingField: List<List<Int>>? = null
 ) {
-    // performs deep copy if fieldCopy isn't null
-    private val _field: List<List<Int>> = fieldCopy?.map { it.toList() } ?: generateField()
-    val field get() = _field
-    val fitness = calculateFitness()
+    private val _field: MutableList<MutableList<Int>> = copyingField
+        ?.map { it.toMutableList() }
+        ?.toMutableList()
+        ?: generateField()
 
-    private fun calculateFitness(): Int {
-        var fitness = 0
-        fitness += calculateColumnFitness().toDouble().pow(2.0).toInt()
-        fitness += calculateBlockFitness().toDouble().pow(2.0).toInt()
-        return fitness
+    /** Gets the current Sudoku field. */
+    val field: List<List<Int>> get() = _field
+
+    private var _fitness = calculateFitness()
+
+    /** Gets the fitness value of the field. */
+    val fitness get() = _fitness
+
+    /**
+     * Performs mutation on the Sudoku field.
+     * Randomly swaps numbers in non-protected cells.
+     */
+    fun mutate() {
+        for (range in BlockRanges.ranges) {
+            val mutationEvent = Random.nextInt(0..100)
+            if (mutationEvent < Config.MUTATION_PROBABILITY * 100) {
+                val freeIndices: MutableList<Pair<Int, Int>> = mutableListOf()
+                for (i in range.first) {
+                    for (j in range.second) {
+                        if (Input.initialField[i][j] == 0) {
+                            freeIndices.add(Pair(i, j))
+                        }
+                    }
+                }
+                val freeIndex1: Pair<Int, Int> = try {
+                    freeIndices.random()
+                } catch (e: NoSuchElementException) {
+                    Pair(0, 0)
+                }
+                freeIndices.remove(freeIndex1)
+                val freeIndex2 = try {
+                    freeIndices.random()
+                } catch (e: NoSuchElementException) {
+                    freeIndex1
+                }
+                val temp = _field[freeIndex1.first][freeIndex1.second]
+                _field[freeIndex1.first][freeIndex1.second] = _field[freeIndex2.first][freeIndex2.second]
+                _field[freeIndex2.first][freeIndex2.second] = temp
+            }
+        }
+        _fitness = calculateFitness()
     }
 
+    /**
+     * Generates a new Sudoku field based on the initial field.
+     *
+     * @return A mutable list of lists of integers representing the generated Sudoku field.
+     */
+    private fun generateField(): MutableList<MutableList<Int>> {
+        val generatedField: MutableList<MutableList<Int>> = Input.initialField
+            .map { it.toMutableList() }
+            .toMutableList()
+        for (range in BlockRanges.ranges) {
+            val fixedDigits: List<Int> = range.first
+                .flatMap { Input.initialField[it].subList(range.second.first, range.second.last + 1) }
+                .filter { it != 0 }
+
+            val allowedDigits = (1..9)
+                .filter { digit -> !fixedDigits.contains(digit) }
+                .toMutableList()
+
+            for (i in range.first) {
+                for (j in range.second) {
+                    if (generatedField[i][j] == 0) {
+                        generatedField[i][j] = allowedDigits.removeAt(allowedDigits.indices.random())
+                    }
+                }
+            }
+        }
+        return generatedField
+    }
+
+    /**
+     * Calculates the fitness of the Sudoku field.
+     *
+     * The fitness is calculated based on the number of duplicate values in columns and blocks.
+     * @return An integer representing the fitness value.
+     */
+    private fun calculateFitness(): Int {
+        return calculateColumnFitness().toDouble().pow(2).toInt() +
+                calculateRowFitness().toDouble().pow(2).toInt()
+    }
+
+    /**
+     * Calculates the fitness based on the columns of the Sudoku field.
+     *
+     * @return An integer representing the column fitness value.
+     */
     private fun calculateColumnFitness(): Int {
         var columnFitness = 0
         for (col in _field[0].indices) {
@@ -87,273 +200,146 @@ data class GameField(
         return columnFitness
     }
 
-    private fun calculateBlockFitness(): Int {
-        var blockFitness = 0
-        for (blockRow in 0..<3) {
-            for (blockCol in 0..<3) {
+    /**
+     * Calculates the fitness based on the rows of the Sudoku field.
+     *
+     * @return An integer representing the block fitness value.
+     */
+    private fun calculateRowFitness(): Int {
+        var rowFitness = 0
+        for (row in _field) {
+            val seenCount = (1..9).associateWith { 0 }.toMutableMap()
+            for (digit in row) {
+                seenCount[digit] = seenCount[digit]!! + 1
+            }
+            seenCount.values.forEach {
+                rowFitness += (if (it == 0) 0 else (it - 1))
+            }
+        }
+        return rowFitness
+    }
 
-                val seenCount = (1..9).associateWith { 0 }.toMutableMap()
-                for (col in (3 * blockCol)..<(3 * (blockCol + 1))) {
-                    for (row in (3 * blockRow)..<(3 * (blockRow + 1))) {
-                        val digit = _field[row][col]
-                        seenCount[digit] = seenCount[digit]!! + 1
+    /**
+     * Prints the Sudoku field to the console.
+     */
+    fun printField() {
+        _field.forEach { row -> println(row.joinToString(" ")) }
+    }
+}
+
+/**
+ * Class representing a population of Sudoku fields for the genetic algorithm.
+ */
+class Population {
+    private val _population: MutableList<SudokuField> = generatePopulation()
+
+    /** Gets the current population of Sudoku fields. */
+    val population: List<SudokuField> get() = _population
+
+    /**
+     * Generates the initial population of Sudoku fields.
+     *
+     * @return A mutable list of SudokuField objects.
+     */
+    private fun generatePopulation(): MutableList<SudokuField> {
+        return (1..Config.POPULATION_SIZE)
+            .map { SudokuField() }
+            .toMutableList()
+    }
+
+    /**
+     * Updates the population by performing crossover and mutation.
+     */
+    fun updatePopulation() {
+        _population.shuffle()
+        for (i in 0 until Config.POPULATION_SIZE) {
+            val parent1 = _population[i]
+            val parent2 = _population[(i + 1) % Config.POPULATION_SIZE]
+            _population.add(crossover(parent1, parent2))
+        }
+        if (_population.minBy { it.fitness }.fitness == 0) {
+            return
+        }
+        for (i in _population.indices) {
+            _population[i].mutate()
+        }
+        _population.sortBy { it.fitness }
+        _population.subList(Config.POPULATION_SIZE, _population.size).clear()
+    }
+
+    /**
+     * Performs crossover between two parent Sudoku fields to create a child field.
+     *
+     *  @param parent1 The first parent Sudoku field.
+     *  @param parent2 The second parent Sudoku field.
+     *  @return A new SudokuField object representing the child field.
+     */
+    private fun crossover(parent1: SudokuField, parent2: SudokuField): SudokuField {
+        val childField = parent1.field
+            .map { it.toMutableList() }
+            .toMutableList()
+        for (range in BlockRanges.ranges) {
+            val randomComponent = Random.nextInt(0..1)
+            if (randomComponent == 0) {
+                for (i in range.first) {
+                    for (j in range.second) {
+                        childField[i][j] = parent2.field[i][j]
                     }
                 }
-                seenCount.values.forEach {
-                    blockFitness += (if (it == 0) 0 else (it - 1))
-                }
             }
         }
-        return blockFitness
-    }
-
-    private fun generateField(): List<List<Int>> {
-        return initialField.map { row -> generateRow(row) }
-    }
-
-    fun printField() {
-        field.forEach { row -> println(row.joinToString(" ")) }
-    }
-
-    companion object {
-        fun generateRow(initialRow: List<Int>): List<Int> {
-            val newRow = (1..9).toList().shuffled().toMutableList()
-            for (i in newRow.indices) {
-                if (newRow[i] != initialRow[i] && initialRow[i] != 0) {
-                    val swapIndex = newRow.indexOf(initialRow[i])
-                    newRow.swapInPlace(i, swapIndex)
-                }
-            }
-            return newRow
-        }
+        return SudokuField(childField)
     }
 }
 
-
-data class Population(
-    private val initialField: List<List<Int>>,
-    private val populationCopy: List<GameField>? = null,
-) {
-    private val _population = populationCopy ?: generatePopulation()
-    val population get() = _population
-
-    private fun generatePopulation(): List<GameField> {
-        return (1..Constants.POPULATION_SIZE).map { GameField(initialField) }
-    }
-
-    fun getWeightedPool(): List<GameField> {
-        val sortedPopulation = _population.sortedByDescending { it.fitness }.toMutableList()
-        val weights = (1.._population.size).toMutableList()
-        val randomPool = mutableListOf<GameField>()
-        repeat(Constants.POPULATION_SIZE) {
-            val currentChoiceId = weightedRandomChoice(sortedPopulation, weights)
-            val currentChoice = sortedPopulation.removeAt(currentChoiceId)
-            weights.removeAt(currentChoiceId)
-            randomPool.add(currentChoice)
-        }
-        return randomPool
-    }
-
-//    fun getRandomPool(): List<GameField> {
-//        val weights = _population.map { abs(it.fitness - _population[0].fitness) }
-//        val randomPool = mutableListOf<GameField>()
-//        repeat(Constants.POPULATION_SIZE) {
-//            randomPool.add(weightedRandomChoice(_population, weights))
-//        }
-//        return randomPool
-//    }
-
-    private fun <T> weightedRandomChoice(items: List<T>, weights: List<Int>): Int {
-        val totalWeight = weights.sum()
-        val randomVariable = Random.nextInt(0, totalWeight)
-        var cumulativeWeight = 0
-        for (i in items.indices) {
-            cumulativeWeight += weights[i]
-            if (randomVariable < cumulativeWeight) {
-                return i
-            }
-        }
-        return weights.last() - 1
-    }
-
-    fun getChildren(): List<GameField> {
-        val childrenPool = mutableListOf<GameField>()
-        for (i in 0..<(Constants.POPULATION_SIZE / 2)) {
-            var gameField1 = _population[i]
-            var gameField2 = _population[(i + 1) % _population.size]
-            val crossoverChance = Random.nextInt(0..100)
-            if (crossoverChance < Constants.CROSSOVER_PROBABILITY * 100) {
-                val childrenPair = crossover(initialField, gameField1, gameField2)
-                gameField1 = childrenPair.first
-                gameField2 = childrenPair.second
-            }
-            gameField1 = rearrangementMutation(initialField, gameField1)
-            gameField2 = rearrangementMutation(initialField, gameField2)
-            if (gameField1.fitness <= 16) {
-                gameField1 = localSearchMutation(initialField, gameField1)
-            }
-            if (gameField2.fitness <= 16) {
-                gameField2 = localSearchMutation(initialField, gameField2)
-            }
-            childrenPool.add(gameField1)
-            childrenPool.add(gameField2)
-        }
-        return childrenPool
-    }
-}
-
-
-fun crossover(
-    initialField: List<List<Int>>,
-    parent1: GameField,
-    parent2: GameField
-): Pair<GameField, GameField> {
-    val fieldChild1 = mutableListOf<List<Int>>()
-    val fieldChild2 = mutableListOf<List<Int>>()
-    for (i in 0..<(Constants.FIELD_SIZE)) {
-        val crossoverVariant = Random.nextInt(0..1)
-        if (crossoverVariant == 1) {
-            fieldChild1.add(parent1.field[i])
-            fieldChild2.add(parent2.field[i])
-        } else {
-            fieldChild1.add(parent2.field[i])
-            fieldChild2.add(parent1.field[i])
-        }
-    }
-    return Pair(
-        first = GameField(initialField, fieldChild1),
-        second = GameField(initialField, fieldChild2)
-    )
-}
-
-
-fun refillingMutation(initialField: List<List<Int>>, parent: GameField): GameField {
-    val fieldChild = mutableListOf<List<Int>>()
-    for (i in 0..<(Constants.FIELD_SIZE)) {
-        val mutationEvent = Random.nextInt(0..100)
-        if (mutationEvent < Constants.MUTATION_PROBABILITY * 100) {
-            fieldChild.add(GameField.generateRow(initialField[i]))
-        } else {
-            fieldChild.add(parent.field[i])
-        }
-    }
-    return GameField(initialField, fieldChild)
-}
-
-
-fun rearrangementMutation(initialField: List<List<Int>>, parent: GameField): GameField {
-    val fieldChild = mutableListOf<List<Int>>()
-    for (i in 0..<(Constants.FIELD_SIZE)) {
-        val mutationEvent = Random.nextInt(0..100)
-        if (mutationEvent < Constants.MUTATION_PROBABILITY * 100) {
-            val freeIndices = initialField[i]
-                .mapIndexedNotNull { index, value -> if (value == 0) index else null }
-                .toMutableList()
-            val freeIndex1: Int = try {
-                freeIndices.random()
-            } catch (e: NoSuchElementException) {
-                0
-            }
-            freeIndices.remove(freeIndex1)
-            val freeIndex2 = try {
-                freeIndices.random()
-            } catch (e: NoSuchElementException) {
-                freeIndex1
-            }
-            fieldChild.add(parent.field[i].toMutableList().swapWithCopy(freeIndex1, freeIndex2))
-        } else {
-            fieldChild.add(parent.field[i])
-        }
-    }
-    return GameField(initialField, fieldChild)
-}
-
-
-fun localSearchMutation(initialField: List<List<Int>>, parent: GameField): GameField {
-    var colRepetitionMatrix = getColRepetitionMatrix(initialField, parent.field)
-    val fieldChild = parent.field.map { it.toMutableList() }.toMutableList()
-    for (i in 0..<(Constants.FIELD_SIZE)) {
-        val freeIndices = (0..<(Constants.FIELD_SIZE)).filter { it != i }
-        for (freeId in freeIndices) {
-            val conjunction = colRepetitionMatrix[i]
-                .zip(colRepetitionMatrix[freeId]) { a, b -> a && b }
-            val samePosRepetition = conjunction.indexOf(true)
-            if (samePosRepetition != -1) {
-                val temp = fieldChild[i][samePosRepetition]
-                fieldChild[i][samePosRepetition] = fieldChild[freeId][samePosRepetition]
-                fieldChild[freeId][samePosRepetition] = temp
-                colRepetitionMatrix = getColRepetitionMatrix(initialField, fieldChild)
-            }
-        }
-    }
-    return GameField(initialField, fieldChild)
-}
-
-private fun getColRepetitionMatrix(initialField: List<List<Int>>, field: List<List<Int>>): List<List<Boolean>> {
-    val colRepetitionMatrix = (1..(Constants.FIELD_SIZE))
-        .map { MutableList(Constants.FIELD_SIZE) { false } }
-        .toMutableList()
-    for (j in 0..<(Constants.FIELD_SIZE)) {
-        val repetitions = IntArray(Constants.FIELD_SIZE)
-        for (i in 0..<(Constants.FIELD_SIZE)) {
-            val digit = field[i][j]
-            repetitions[digit - 1]++
-        }
-        for (i in 0..<(Constants.FIELD_SIZE)) {
-            if (initialField[i][j] == 0) {
-                colRepetitionMatrix[j][i] = repetitions[i] > 1
-            }
-        }
-    }
-    return colRepetitionMatrix
-}
-
-
+/**
+ * Executes the genetic algorithm to solve the Sudoku puzzle.
+ */
 fun geneticAlgorithm() {
-    val initialField = getInitialField()
-    var populationState = Population(initialField)
-    var generationNumber = 0
+    var population = Population()
+    var bestFitness = Int.MAX_VALUE
+    var fitnessStagnationDuration = 0
+
+    var maxFitness = 0
+    val avgFitness = mutableListOf<Int>()
+
     while (true) {
-        if (generationNumber++ >= Constants.POPULATION_COUNT) {
-            populationState = Population(initialField)
-            generationNumber = 0
+        val bestSudokuField = population.population.minBy { it.fitness }
+
+        maxFitness = max(bestSudokuField.fitness, maxFitness)
+        avgFitness.add(bestSudokuField.fitness)
+
+        if (bestFitness > bestSudokuField.fitness) {
+            bestFitness = bestSudokuField.fitness
+            fitnessStagnationDuration = 0
+        } else {
+            fitnessStagnationDuration++
         }
-        val matingPool = populationState.getWeightedPool()
-        matingPool.shuffled()
-        val matingPopulation = Population(initialField, matingPool)
-        val childrenPool = matingPopulation.getChildren()
-        val bestGameField = childrenPool.minByOrNull { it.fitness }
-        println("$generationNumber Best fitness: ${bestGameField?.fitness}")
-//        if (bestGameField?.fitness == 4) {
-//            bestGameField.printField()
-//        }
-        if (bestGameField?.fitness == 0) {
-            bestGameField.printField()
+        if (fitnessStagnationDuration >= Config.POPULATION_STAGNATION_DURATION) {
+            population = Population()
+            fitnessStagnationDuration = 0
+            maxFitness = 0
+            avgFitness.clear()
+        }
+
+        if (Config.DEBUG_MODE) {
+            println("Best fitness: ${bestSudokuField.fitness}")
+        }
+
+        if (bestSudokuField.fitness == 0) {
+            bestSudokuField.printField()
+            println(avgFitness.sum().toDouble() / avgFitness.size)
+            println(maxFitness)
             break
         }
-        populationState = Population(initialField, childrenPool)
+
+        population.updatePopulation()
     }
 }
 
-
 fun main() {
+    val startingTime = System.currentTimeMillis()
     geneticAlgorithm()
-//    val initialField = getInitialField()
-//    val field = listOf(
-//        listOf(8, 3, 6, 5, 1, 2, 9, 4, 7),
-//        listOf(1, 7, 5, 6, 2, 8, 4, 9, 3),
-//        listOf(6, 2, 4, 8, 3, 7, 1, 9, 5),
-//        listOf(3, 7, 9, 4, 8, 6, 2, 5, 1),
-//        listOf(2, 6, 3, 7, 5, 1, 8, 4, 8),
-//        listOf(9, 5, 8, 2, 4, 9, 7, 3, 2),
-//        listOf(8, 1, 7, 1, 6, 4, 3, 5, 9),
-//        listOf(4, 8, 1, 9, 7, 3, 6, 8, 6),
-//        listOf(5, 4, 2, 3, 9, 5, 1, 2, 8)
-//    )
-//    val sudokuField = GameField(initialField, field)
-//    println(sudokuField.fitness)
-//    val newField = localSearchMutation(initialField, sudokuField)
-//    newField.printField()
-//    println(newField.fitness)
+    println((System.currentTimeMillis() - startingTime) / 1000.0)
 }
-
+// attempt 1
